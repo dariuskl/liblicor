@@ -1,0 +1,12 @@
+/.settings
+/build
+/doc
+/example
+
+*.a
+*.o
+*~
+licor
+.project
+.cproject
+
