@@ -6,11 +6,11 @@ SOURCES=src/liblicor.c src/cc2500/cc2500.c
 OBJECTS=$(SOURCES:src/%.c=build/%.o)
 ARTIFACT=build/liblicor.a
 
-.PHONY: clean example
+.PHONY: clean example install uninstall
 
 all: pre-build $(SOURCES) $(ARTIFACT)
 
-pre-build:
+pre-build: build build/cc2500
 	@mkdir -p build/
 	@mkdir -p build/cc2500
 
@@ -26,4 +26,10 @@ clean:
 example: $(ARTIFACT)
 	$(CC) $(CFLAGS) -c -Isrc/ example/main.c -o build/example.o
 	$(CC) -Lbuild/ build/example.o -lm -llicor -o build/licor
+
+install: pre-build $(ARTIFACT) example
+	install --group=root --owner=root build/licor /usr/local/bin
+
+uninstall: /usr/local/bin/licor
+	rm -f /usr/local/bin/licor
 
