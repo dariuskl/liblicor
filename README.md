@@ -18,13 +18,8 @@ learning functionality is not yet implemented.
 To Do
 -------------
 
-[ ] Implement a device reset
+  - [ ] Implement a device reset
         Sometimes the CC2500 will become unresponsive and needs to be resetted.
         This is not unproblematic (at least with Linux), because the `spidev`
         driver has full and exclusive control over the `CSn` line.
-[ ] Use `argp` for CLI parsing
-        Instead of hand-parsing the CLI parameters, use `argp` and provide only
-        a function that parses the color strings. It should not be built upon
-        `sscanf` either, since we can achieve higher performance than that using
-        specialized means.
 
