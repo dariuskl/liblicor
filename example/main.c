@@ -19,9 +19,9 @@
  * THE SOFTWARE.
  */
 
+#include <argp.h>
 #include <errno.h>
 #include <inttypes.h>
-#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,18 +33,11 @@
 
 #include <liblicor.h>
 
-#ifndef M_PI
-#define M_PI		3.14159265358979323846
-#endif
-
-#ifndef min
-#define min(a, b)	(a < b?a:b)
-#endif
-
 static struct {
 	int command;
 	int verbose;
-} options = {-1, 0};
+	struct color color;
+} options = {-1};
 
 static int spi;
 
@@ -118,55 +111,26 @@ int spi_transfer(void *tx_buf, void *rx_buf, uint8_t n_bytes)
 	return 0;
 }
 
-static void rgb2hsi(uint8_t R, uint8_t G, uint8_t B, uint8_t *H, uint8_t *S,
-		uint8_t *I)
+enum COMMANDS {
+	C_ON = 0, C_OFF = 1
+};
+
+static int parse_command(const char *cmnd)
 {
-	float r, g, b, h, s, i;
-
-	if (R + G + B == 0) {
-		*H = 0;
-		*S = 0;
-		*I = 0;
+	if (strncmp(cmnd, "on", 2) == 0) {
+		return C_ON;
 	}
-	else if (R == G && R == B) {
-		*H = 0;
-		*S = 0;
-		i = (R + G + B) / (3.0f * 255.0f);
-
-		*I = i * 255;
+	else if (strncmp(cmnd, "off", 3) == 0) {
+		return C_OFF;
 	}
 	else {
-		/* normalize RGB values */
-		r = R / (float)(R + G + B);
-		g = G / (float)(R + G + B);
-		b = B / (float)(R + G + B);
-
-		/* calculate normalized H */
-		h = acos (
-			( 0.5f * ((r-g)+(r-b)) )
-			/ sqrt( pow (r-g,2) + ((r-b)*(g-b)) )
-		);
-		if (b > g) {
-			h = 2 * M_PI - h;
-		}
-
-		// calculate normalized s
-		s = 1.0f - ( 3.0f * min(min(r, g), b) );
-
-		// calculate normalized i
-		i = (R + G + B) / (float)(3 * 255);
-
-		// normieren
-		*H = (h * 180.0f / M_PI) * 255.f/360.f;
-		*S = s * 255;
-		*I = i * 255;
+		return -1;
 	}
 }
 
 static int parse_color(char *s, struct color *c)
 {
 	int ret;
-	uint8_t r, g, b;
 
 	ret = sscanf(s, "%hhu,%hhu,%hhu",
 			&(c->hue),
@@ -175,85 +139,74 @@ static int parse_color(char *s, struct color *c)
 	if (ret == 3)
 		return 0;
 
-	ret = sscanf(s, "%2hhx%2hhx%2hhx", &r, &g, &b);
-	if (ret == 3) {
-		rgb2hsi(r, g, b, &(c->hue), &(c->saturation), &(c->value));
-		return 0;
-	}
-
 	return -1;
 }
 
-static void print_usage(void)
-{
-	fputs("licor [<options>] <command> [<color>]\n"
-			"<options> can be one of\n"
-			"\t-v\t\tbe verbose\n"
-			"\n"
-			"<command> can be one of\n"
-			"\ton\t\tturn the lamp on\n"
-			"\toff\t\tturn the lamp off\n"
-			"\n"
-			"<color> is a color and can be given in HSI or RGB:\n"
-			"\tH,S,I\n"
-			"\tRGB\n",
-			stderr);
-	exit(1);
-}
-
-enum COMMANDS {
-	C_ON, C_OFF
+static struct argp_option argp_options[]  = {
+		{"verbose", 'v', NULL, 0, "Be verbose"},
+		{0}
 };
 
-static void parse_args(int argc, char **argv)
+static error_t parse_opt(int key, char *arg, struct argp_state *state)
 {
 	int ret;
 
-	if (argc == 1)
-		print_usage();
+	switch (key) {
+	case 'v':
+		options.verbose = 1;
+		break;
 
-	if (argc < 2) {
-		fputs("Insufficiently many arguments provided\n", stderr);
-	}
-
-	for (; argc > 0; argc--) {
-		if (argv[argc][0] == '-') {
-			/* option */
-			switch (argv[argc][1]) {
-			case 'v':
-				options.verbose = 1;
-				break;
-			default:
-				fprintf(stderr, "licor: invalid option `%c`",
-						argv[argc][1]);
-				exit(1);
-				break;
+	case ARGP_KEY_ARG:
+		if (state->arg_num == 0) {
+			options.command = parse_command(arg);
+			if (options.command < 0) {
+				fputs("licor: invalid command given\n", stderr);
+				return EINVAL;
 			}
 		}
-		else if (options.command == -1) {
-			/* command */
-			if (strncmp(argv[1], "on", 2) == 0) {
-				options.command = C_ON;
-			}
-			else if (strncmp(argv[1], "off", 3) == 0) {
-				options.command = C_OFF;
-			}
-			else {
-				fprintf(stderr, "licor: invalid command `%s`\n",
-						argv[argc]);
-				exit(1);
+		else if (options.command == C_ON && state->arg_num == 1) {
+			ret = parse_color(arg, &options.color);
+			if (ret != 0) {
+				fputs("licor: invalid color given\n", stderr);
+				return EINVAL;
 			}
 		}
 		else {
-			/* color */
-			ret = parse_color(argv[argc], lc_color);
-			if (ret != 0) {
-				fputs("licor: invalid color format\n", stderr);
-				exit(1);
-			}
+			fprintf(stderr, "licor: unexpected argument `%s`\n",
+					arg);
+			return EINVAL;
 		}
+		break;
+
+	case ARGP_KEY_END:
+		if (state->arg_num < 1) {
+			argp_usage(state);
+		}
+		else if (state->arg_num == 1 && options.command == C_ON) {
+			fputs("licor: missing argument <color>\n", stderr);
+			return EINVAL;
+		}
+		break;
+
+	default:
+		return ARGP_ERR_UNKNOWN;
 	}
+
+	return 0;
 }
+
+static struct argp argp = {
+		argp_options, &parse_opt,
+		"<command> [<color>]",
+		"A simple command-line interface for liblicor. You can use this"
+		" to control Philips Living Colors lamps.\n\n"
+		"<command> can be one of\n"
+		"\ton\t\tTurn the lamp on\n"
+		"\toff\t\tTurn the lamp off\n"
+		"\n"
+		"<color> is a color and must be given as\n"
+		"\tH,S,V"
+};
 
 static struct lc_lamp lamp = {
 		{0xF0, 0x58, 0xAD, 0x15, 0xE6, 0x47, 0xA5, 0x0B, 0x11},
@@ -264,13 +217,17 @@ int main(int argc, char *argv[])
 {
 	int ret;
 
+	ret = argp_parse(&argp, argc, argv, 0, 0, &options);
+	if (ret != 0)
+		return 1;
+
 	ret = lc_init();
 	if (ret != 0) {
 		perror("lc_init()");
 		return 1;
 	}
 
-	parse_args(argc, argv);
+	*lc_color = options.color;
 
 	switch (options.command) {
 	case C_ON:
@@ -281,3 +238,4 @@ int main(int argc, char *argv[])
 		break;
 	}
 }
+
