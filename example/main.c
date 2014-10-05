@@ -35,9 +35,10 @@
 
 static struct {
 	int command;
+	char *device;
 	int verbose;
 	struct color color;
-} options = {-1};
+} options = {-1, "/dev/spidev0.0"};
 
 static int spi;
 
@@ -51,9 +52,11 @@ int spi_init(void)
 	bits = 8;
 	speed = 5000000;
 
-	spi = open("/dev/spidev0.0", O_RDWR);
+	spi = open(options.device, O_RDWR);
 	if (spi < 0) {
-		perror("Trying to open the SPI device");
+		fputs("Trying to open the SPI device `", stderr);
+		fputs(options.device, stderr);
+		perror("`");
 		return -1;
 	}
 
@@ -112,7 +115,7 @@ int spi_transfer(void *tx_buf, void *rx_buf, uint8_t n_bytes)
 }
 
 enum COMMANDS {
-	C_ON = 0, C_OFF = 1
+	C_ON = 0, C_OFF = 1, C_SET = 2
 };
 
 static int parse_command(const char *cmnd)
@@ -122,6 +125,9 @@ static int parse_command(const char *cmnd)
 	}
 	else if (strncmp(cmnd, "off", 3) == 0) {
 		return C_OFF;
+	}
+	else if (strncmp(cmnd, "set", 3) == 0) {
+		return C_SET;
 	}
 	else {
 		return -1;
@@ -143,6 +149,7 @@ static int parse_color(char *s, struct color *c)
 }
 
 static struct argp_option argp_options[]  = {
+		{"device", 'd', "DEVICE", 0, "The SPI device to use"},
 		{"verbose", 'v', NULL, 0, "Be verbose"},
 		{0}
 };
@@ -152,6 +159,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 	int ret;
 
 	switch (key) {
+	case 'd':
+		options.device = arg;
+		break;
 	case 'v':
 		options.verbose = 1;
 		break;
@@ -164,7 +174,8 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 				return EINVAL;
 			}
 		}
-		else if (options.command == C_ON && state->arg_num == 1) {
+		else if ((options.command == C_ON || options.command == C_SET)
+				&& state->arg_num == 1) {
 			ret = parse_color(arg, &options.color);
 			if (ret != 0) {
 				fputs("licor: invalid color given\n", stderr);
@@ -182,7 +193,8 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		if (state->arg_num < 1) {
 			argp_usage(state);
 		}
-		else if (state->arg_num == 1 && options.command == C_ON) {
+		else if (state->arg_num == 1 && (options.command == C_ON
+				|| options.command == C_SET)) {
 			fputs("licor: missing argument <color>\n", stderr);
 			return EINVAL;
 		}
@@ -201,8 +213,9 @@ static struct argp argp = {
 		"A simple command-line interface for liblicor. You can use this"
 		" to control Philips Living Colors lamps.\n\n"
 		"<command> can be one of\n"
-		"\ton\t\tTurn the lamp on\n"
-		"\toff\t\tTurn the lamp off\n"
+		"\ton <color>\t\tTurn the lamp on\n"
+		"\toff\t\t\tTurn the lamp off\n"
+		"\tset <color>\t\tSet the color of the lamp\n"
 		"\n"
 		"<color> is a color and must be given as\n"
 		"\tH,S,V"
@@ -222,12 +235,14 @@ int main(int argc, char *argv[])
 		return 1;
 
 	ret = lc_init();
-	if (ret != 0) {
-		perror("lc_init()");
+	if (ret != 0)
 		return 1;
-	}
 
 	*lc_color = options.color;
+
+	if (options.verbose)
+		printf("\tlc_color: %hhu,%hhu,%hhu\n", lc_color->hue,
+				lc_color->saturation, lc_color->value);
 
 	switch (options.command) {
 	case C_ON:
@@ -236,6 +251,12 @@ int main(int argc, char *argv[])
 	case C_OFF:
 		lc_off(&lamp);
 		break;
+	case C_SET:
+		lc_set_color(&lamp, NULL);
+		break;
+	default:
+		return 1;
 	}
-}
 
+	return 0;
+}
