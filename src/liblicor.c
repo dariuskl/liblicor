@@ -98,7 +98,7 @@ int lc_init(void)
 	cc2k5_set_register(TEST2,	0x88);
 	cc2k5_set_register(TEST1,	0x31);
 	cc2k5_set_register(TEST0,	0x0B);
-	cc2k5_set_register(PATABLE,	0xA9);
+	cc2k5_set_register(PATABLE,	0xFF);
 
 	cc2k5_send_cmnd(SIDLE);
 	cc2k5_send_cmnd(SIDLE);
