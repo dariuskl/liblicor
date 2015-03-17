@@ -20,6 +20,7 @@
  */
 
 #include <argp.h>
+#include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <stdint.h>
@@ -27,18 +28,30 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <unistd.h>
+
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <linux/spi/spidev.h>
 
 #include <liblicor.h>
 
+#define STS_BASE_DIR	"/var/local/licor"
+#define STS_SEQNO	"seqno"
+
 static struct {
 	int command;
 	char *device;
+	uint8_t repetitions;
+	struct lc_lamp lamp;
 	int verbose;
 	struct color color;
-} options = {-1, "/dev/spidev0.0"};
+} options = {-1, "/dev/spidev0.0", 1,
+	{
+		{0xF0, 0x58, 0xAD, 0x15, 0xE6, 0x47, 0xA5, 0x0B, 0x11},
+		0
+	}
+};
 
 static int spi;
 
@@ -115,8 +128,21 @@ int spi_transfer(void *tx_buf, void *rx_buf, uint8_t n_bytes)
 }
 
 enum COMMANDS {
-	C_ON = 0, C_OFF = 1, C_SET = 2
+	C_ON = 0, C_OFF = 1, C_SET = 2, C_SCAN = 3
 };
+
+static int parse_address(const char *s, uint8_t addr[9])
+{
+	int ret;
+
+	ret = sscanf(s, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+			&addr[0], &addr[1], &addr[2], &addr[3], &addr[4],
+			&addr[5], &addr[6], &addr[7], &addr[8]);
+	if (ret == 9)
+		return 0;
+
+	return -1;
+}
 
 static int parse_command(const char *cmnd)
 {
@@ -128,6 +154,9 @@ static int parse_command(const char *cmnd)
 	}
 	else if (strncmp(cmnd, "set", 3) == 0) {
 		return C_SET;
+	}
+	else if (strncmp(cmnd, "scan", 4) == 0) {
+		return C_SCAN;
 	}
 	else {
 		return -1;
@@ -148,8 +177,17 @@ static int parse_color(char *s, struct color *c)
 	return -1;
 }
 
+const char *argp_program_version = "licor 0.1";
+const char *argp_program_bug_address = "<darius.kellermann@gmail.com>";
+
 static struct argp_option argp_options[]  = {
+		{"address", 'a', "ADDR", 0, "The 9 byte long address of the "
+				"lamp that should be controlled"},
 		{"device", 'd', "DEVICE", 0, "The SPI device to use"},
+		{"repetitions", 'r', "N", 0, "The number of times the according"
+				" command package is sent (hotfix option)"},
+		{"sequence", 's', "SEQNUM", 0, "The sequence number to use for "
+				"the packet"},
 		{"verbose", 'v', NULL, 0, "Be verbose"},
 		{0}
 };
@@ -159,8 +197,32 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 	int ret;
 
 	switch (key) {
+	case 'a':
+		ret = parse_address(arg, (uint8_t *)&(options.lamp.addr));
+		if (ret != 0) {
+			fputs("licor: malformed address string\n", stderr);
+			return EINVAL;
+		}
+		break;
 	case 'd':
 		options.device = arg;
+		break;
+	case 'r':
+		ret = atoi(arg);
+		if (ret > 255 || ret < 1) {
+			fputs("licor: number of repetitions out of range\n",
+					stderr);
+			return EINVAL;
+		}
+		options.repetitions = (uint8_t)ret;
+		break;
+	case 's':
+		ret = atoi(arg);
+		if (ret > 255 || ret < 0) {
+			fputs("licor: sequence number out of range\n", stderr);
+			return EINVAL;
+		}
+		options.lamp.seq = (uint8_t)ret;
 		break;
 	case 'v':
 		options.verbose = 1;
@@ -216,47 +278,120 @@ static struct argp argp = {
 		"\ton <color>\t\tTurn the lamp on\n"
 		"\toff\t\t\tTurn the lamp off\n"
 		"\tset <color>\t\tSet the color of the lamp\n"
+		"\tscan\t\t\tScan for lamp addresses\n"
 		"\n"
 		"<color> is a color and must be given as\n"
 		"\tH,S,V"
 };
 
-static struct lc_lamp lamp = {
-		{0xF0, 0x58, 0xAD, 0x15, 0xE6, 0x47, 0xA5, 0x0B, 0x11},
-		0
-};
-
 int main(int argc, char *argv[])
 {
-	int ret;
+	int ret, result;
+	FILE *sts_seqno_f;
+
+	result = 1;
+	sts_seqno_f = NULL;
 
 	ret = argp_parse(&argp, argc, argv, 0, 0, &options);
 	if (ret != 0)
 		return 1;
 
+	ret = access(STS_BASE_DIR, F_OK);
+	if (ret != 0) {
+		perror("error: status directory does not exist");
+		goto finish;
+	}
+
+	ret = access(STS_BASE_DIR, R_OK);
+	if (ret != 0) {
+		fputs("error: cannot read from status directory", stderr);
+		goto finish;
+	}
+
+	sts_seqno_f = fopen(STS_BASE_DIR "/" STS_SEQNO, "r+");
+	if (sts_seqno_f == NULL) {
+		perror("error: cannot open sequence number file");
+		goto finish;
+	}
+
+	ret = fread(&options.lamp.seq, sizeof options.lamp.seq, 1, sts_seqno_f);
+	if (ret != 1) {
+		perror("warning: cannot read from sequence number file, "
+				"assuming 0");
+		options.lamp.seq = 0;
+	}
+
 	ret = lc_init();
 	if (ret != 0)
-		return 1;
+		goto finish;
 
 	*lc_color = options.color;
 
-	if (options.verbose)
+	if (options.verbose) {
+		printf("\tlamp = {\n"
+				"\t\taddr = %hhx:%hhx:%hhx:%hhx:%hhx:%hhx:%hhx:"
+				"%hhx:%hhx\n"
+				"\t\tseq = %hhu\n"
+				"\t}\n",
+				options.lamp.addr[0],
+				options.lamp.addr[1],
+				options.lamp.addr[2],
+				options.lamp.addr[3],
+				options.lamp.addr[4],
+				options.lamp.addr[5],
+				options.lamp.addr[6],
+				options.lamp.addr[7],
+				options.lamp.addr[8],
+				options.lamp.seq);
 		printf("\tlc_color: %hhu,%hhu,%hhu\n", lc_color->hue,
 				lc_color->saturation, lc_color->value);
+	}
 
 	switch (options.command) {
 	case C_ON:
-		lc_on(&lamp);
+		for (register int i = 0; i < options.repetitions; i++)
+			lc_on(&options.lamp);
 		break;
 	case C_OFF:
-		lc_off(&lamp);
+		for (register int i = 0; i < options.repetitions; i++)
+			lc_off(&options.lamp);
+		options.lamp.seq = 0;
 		break;
 	case C_SET:
-		lc_set_color(&lamp, NULL);
+		for (register int i = 0; i < options.repetitions; i++)
+			lc_set_color(&options.lamp, NULL);
+		break;
+	case C_SCAN:
+		puts("licor will now scan for addresses. Use your original "
+				"remote intensively for the next few seconds.\n");
+		fputs("error: Sorry, this is not yet implemented.\n", stderr);
 		break;
 	default:
-		return 1;
+		break;
 	}
 
-	return 0;
+	ret = fseek(sts_seqno_f, 0, SEEK_SET);
+	assert (ret == 0);
+
+	ret = fwrite(&options.lamp.seq, sizeof options.lamp.seq, 1, sts_seqno_f);
+	if (ret != 1) {
+		perror("warning: cannot write to sequence number file");
+	}
+
+	ret = fclose(sts_seqno_f);
+	sts_seqno_f = NULL;
+	if (ret == EOF) {
+		perror("Error closing sequence number file");
+		goto finish;
+	}
+
+	result = 0;
+
+finish:
+
+	if (sts_seqno_f != NULL) {
+		fclose(sts_seqno_f);
+	}
+
+	return result;
 }
