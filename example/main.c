@@ -114,7 +114,7 @@ int spi_transfer(void *tx_buf, void *rx_buf, uint8_t n_bytes)
 	tr.rx_buf = (unsigned long)rx_buf;
 	tr.len = n_bytes;
 	tr.delay_usecs = 100;
-	tr.speed_hz = 500000;
+	tr.speed_hz = 5000000;
 	tr.bits_per_word = 8;
 	tr.cs_change = 0;
 
