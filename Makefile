@@ -35,7 +35,7 @@ install: pre-build $(ARTIFACT) build/licor
 	install --group=root --owner=root example/http/index.html example/http/jquery.js example/http/licor.js /srv/http
 	mkdir --mode=775 /var/local/licor
 	echo -en "\x00" > /var/local/licor/seqno
-	chmod 666 > /var/local/licor/seqno
+	chmod 666 /var/local/licor/seqno
 
 uninstall: /usr/local/bin/licor
 	rm -f /usr/local/bin/licor

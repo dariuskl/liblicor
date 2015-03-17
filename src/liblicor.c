@@ -129,7 +129,7 @@ void lc_on(struct lc_lamp *lamp)
 
 	cc2k5_send(&p_buf, sizeof(p_buf));
 
-	p_buf.sequence_number++;
+	lamp->seq++;
 }
 
 void lc_off(struct lc_lamp *lamp)
@@ -140,7 +140,7 @@ void lc_off(struct lc_lamp *lamp)
 
 	cc2k5_send(&p_buf, sizeof(p_buf));
 
-	p_buf.sequence_number++;
+	lamp->seq++;
 }
 
 void lc_set_color(struct lc_lamp *lamp, struct color *new_color)
@@ -156,7 +156,7 @@ void lc_set_color(struct lc_lamp *lamp, struct color *new_color)
 
 	cc2k5_send(&p_buf, sizeof(p_buf));
 
-	p_buf.sequence_number++;
+	lamp->seq++;
 }
 
 #ifdef __cplusplus
